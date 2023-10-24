@@ -4456,18 +4456,21 @@ static int phy_rtl8211f_led_fixup(struct phy_device *phydev)
 	/* Switch to Page 0x0d04 */
 	phy_write(phydev, RTL8211F_PAGE_SELECT, 0x0d04);
 
-	/* Set LED1(Green) Link 10/100/1000M + Active, and set LED2(Yellow) Link 10/100/1000M */
+	/* Set LED1(Green) Link 10/100/1000M + Active, and set LED0(Yellow) Link 10/100/1000M */
 	val = phy_read(phydev, RTL8211F_LCR_ADDR);
 	val |= (1<<5);
+	val |= (1<<6);
 	val |= (1<<8);
-	val |= (1<<10);
-	val |= (1<<11);
-	val &= (~(1<<14));
+	val |= (1<<9);
+	val |= (1<<0);
+	val |= (1<<1);
+	val |= (1<<3);
+	val &= (~(1<<4));
 	phy_write(phydev, RTL8211F_LCR_ADDR, val);
 
-	/* Disable LED2(Yellow) EEE LED function to keep it on when linked */
+	/* Disable LED0(Yellow) EEE LED function to keep it on when linked */
 	val2 = phy_read(phydev, RTL8211F_EEELCR_ADDR);
-	val2 &= (~(1<<3));
+	val2 &= (~(1<<1));
 	phy_write(phydev, RTL8211F_EEELCR_ADDR, val2);
 
 	/* Switch back to the PHY's IEEE Standard Registers. Here it is Page 0 */
