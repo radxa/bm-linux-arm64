@@ -9,6 +9,17 @@
 	info {
 		file-name = "bm1684x_radxa_fogwise_mini.dtb";
 	};
+
+	vcc_audio: audio-regulator {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		regulator-always-on;
+		regulator-boot-on;
+		gpio = <&port0a 7 GPIO_ACTIVE_HIGH>;
+		regulator-name = "vcc_audio";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
 };
 
 &uart2 {
