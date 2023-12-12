@@ -1,0 +1,7 @@
+#include "bm1684x.dtsi"
+#include "bm1684x_mm_16g.dtsi"
+#include "bm1684x_evb.dtsi"
+
+/ {
+	model = "Radxa AICore BM1684x";
+};
