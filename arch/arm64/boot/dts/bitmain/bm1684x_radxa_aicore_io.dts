@@ -46,6 +46,10 @@
 	};
 };
 
+&sn {
+	reg = <0x0000 32>;
+};
+
 &uart2 {
 	status = "disabled";
 };
