@@ -5,3 +5,7 @@
 / {
 	model = "Radxa AICore BM1684x";
 };
+
+&sn {
+	reg = <0x0000 32>;
+};
