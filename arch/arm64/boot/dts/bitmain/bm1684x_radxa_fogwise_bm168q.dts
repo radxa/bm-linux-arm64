@@ -1,4 +1,5 @@
 #include "bm1684x_radxa_aicore.dtsi"
+#include <dt-bindings/input/input.h>
 
 / {
 	model = "Radxa Fogwise BM168Q";
@@ -6,6 +7,18 @@
 	/delete-node/ clp890@50018000;
 	info {
 		file-name = "bm1684x_radxa_fogwise_bm168q.dts";
+	};
+
+	gpiokeys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&jtag0_release>;
+
+		power-key {
+			label = "power_key";
+			linux,code = <KEY_POWER>;
+			gpios = <&port0a 18 GPIO_ACTIVE_HIGH>;
+		};
 	};
 };
 
