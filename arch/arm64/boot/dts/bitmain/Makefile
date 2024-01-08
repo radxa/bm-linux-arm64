@@ -27,4 +27,5 @@ dtb-$(CONFIG_ARCH_BM1684) += bm1684_evb_v1.2.dtb \
 				bm1684x_sm7m_v1.2.dtb \
 				bm1684x_sm7_airbox.dtb \
 				bm1684x_radxa_aicore_io.dtb \
-				bm1684x_radxa_fogwise_mini.dtb \
+				bm1684x_radxa_fogwise_bm168q.dtb \
+				bm1684x_radxa_fogwise_mini.dtb
