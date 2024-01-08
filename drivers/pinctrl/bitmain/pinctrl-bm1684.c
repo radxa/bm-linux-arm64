@@ -131,6 +131,7 @@ static const struct pinctrl_pin_desc bm1684_pins[] = {
 	PINCTRL_PIN(97,   "MIO97"),
 	PINCTRL_PIN(98,   "MIO98"),
 	PINCTRL_PIN(99,   "MIO99"),
+	PINCTRL_PIN(100,   "MIO100"),
 };
 
 static const unsigned int pcie_pins[] = {0, 1, 2, 3, 4, 5};
@@ -152,7 +153,7 @@ static const unsigned int uart2_pins[] = {67, 68};
 // GPIO0 is pin 69
 static const unsigned int jtag0_pins[] = {86, 87, 88, 89, 90, 91}; // GPIO 17~22
 static const unsigned int jtag1_pins[] = {92, 93, 94, 95, 96, 97}; // GPIO 23~28
-static const unsigned int dbgi2c_pins[] = {98, 99};
+static const unsigned int dbgi2c_pins[] = {98, 99, 100};
 
 static const char * const pcie_group[] = {"pcie_grp"};
 static const char * const spif_group[] = {"spif_grp"};
