@@ -94,14 +94,20 @@
 };
 
 &ion_for_vpu {
-			compatible = "vpu-region";
-			reg = <0x3 0x48000000 0x0 0xb7ff0000>; // 2.875G
+		compatible = "vpu-region";
+		reg = <0x3 0x48000000 0x0 0x77359400>; // 1.86G
 };
 
 &ion_for_npu {
-			compatible = "npu-region";
-			reg = <0x1 0x24100000 0x0 0x96e00000>; // 2.5g
+		compatible = "npu-region";
+		reg = <0x1 0x24100000 0x1 0xdbf00000>; // 7.44G
 };
+
+&ion_for_vpp {
+		compatible = "vpp-region";
+		reg = <0x4 0x0 0x0 0x77359400>; // 1.86G, for VPP/JPU
+};
+
 &clock_init {
 	clock-rates = \
 		<2300000000>, <950000000>, <800000000>,
