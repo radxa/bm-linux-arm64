@@ -26,6 +26,32 @@
 	status = "disabled";
 };
 
+&pwm{
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm0_acquire>;
+};
+
+&pwmfan {
+	status = "okay";
+	cooling-levels = <135 162 189 216 255>;
+};
+
+&soc_pwmfan_trip1 {
+	temperature = <41000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip2 {
+	temperature = <46000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip3 {
+	temperature = <51000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip4 {
+	temperature = <56000>; /* millicelsius */
+};
+
 &soc_tpuclk440m_trip {
 	temperature = <65000>;
 };
