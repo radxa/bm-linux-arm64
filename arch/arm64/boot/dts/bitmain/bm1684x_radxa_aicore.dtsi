@@ -9,3 +9,86 @@
 &sn {
 	reg = <0x0000 32>;
 };
+
+&uart2 {
+	status = "disabled";
+};
+
+&pwm {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm0_acquire>;
+};
+
+&pwmfan {
+	status = "okay";
+	cooling-levels = <135 162 189 216 255>;
+};
+
+&soc_pwmfan_trip1 {
+	temperature = <41000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip2 {
+	temperature = <46000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip3 {
+	temperature = <51000>; /* millicelsius */
+};
+
+&soc_pwmfan_trip4 {
+	temperature = <56000>; /* millicelsius */
+};
+
+&soc_tpuclk440m_trip {
+	temperature = <65000>;
+};
+
+&soc_tpuclk75m_trip {
+	temperature = <95000>;
+};
+
+&soc_crit_trip {
+	temperature = <105000>;
+};
+
+&vpu_reserved {
+	reg = <0x3 0x40000000 0x0 0x08000000>; // 128M, for VPU firmware
+	no-map;
+};
+
+&ion_for_vpu {
+	compatible = "vpu-region";
+	reg = <0x3 0x48000000 0x0 0xb7ff0000>; // 2.875G
+};
+
+&ion_for_npu {
+	compatible = "npu-region";
+	reg = <0x1 0x24100000 0x0 0x96e00000>; // 2.5g
+};
+
+&clock_init {
+	clock-rates = \
+		<2300000000>, <950000000>, <800000000>,
+
+		<1000000000>, <1000000000>,
+		<2000000000>, <50000000>,
+		<100000000>, <100000000>,
+		<125000000>, <50000000>,
+		<25000000>, <125000000>,
+		<50000000>, <25000000>,
+		<500000000>, <25000000>,
+		<1000000000>, <500000000>,
+		<800000000>, <100000000>,
+		<250000000>, <250000000>,
+		<500000000>, <500000000>,
+		<50000000>, <50000000>,
+		<50000000>, <50000000>,
+		<50000000>, <50000000>,
+		<50000000>, <50000000>,
+		<100000>, <100000>, <100000>,
+
+		<1000000001>,
+		<800000000>, <800000001>,
+		<2300000001>, <575000000>;
+};
