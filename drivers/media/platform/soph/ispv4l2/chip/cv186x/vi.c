@@ -266,7 +266,7 @@ void *v4l2_vb_dma_alloc(struct device *dev, size_t size,
 
 	ionbuf = (struct ion_buffer *)dmabuf->priv;
 	owner_name = vmalloc(64);
-	strncpy(owner_name, name, sizeof(name));
+	strncpy(owner_name, name, 16);
 	ionbuf->name = owner_name;
 
 	ret = dma_buf_begin_cpu_access(dmabuf, DMA_TO_DEVICE);
@@ -1160,6 +1160,65 @@ void sop_isp_rdy_buf_pop(struct sop_vi_dev *vdev, const u8 chn_num)
 	spin_lock_irqsave(&vdev->qbuf_lock[chn_num], flags);
 	vdev->qbuf_num[chn_num]--;
 	spin_unlock_irqrestore(&vdev->qbuf_lock[chn_num], flags);
+}
+
+void sop_isp_rdy_buf_remove(struct sop_vi_dev *vdev, const u8 raw_num)
+{
+	struct sop_isp_buf *b = NULL;
+	int index;
+	u32 frm_num = vdev->postraw_frame_number[raw_num];
+	bool is_bypass = frm_num > g_vi_ctx->bypass_frm[raw_num] ? 0 : 1;
+	unsigned long flags;
+
+	spin_lock_irqsave(&vdev->qbuf_lock[raw_num], flags);
+	if (!list_empty(&vdev->qbuf_list[raw_num])) {
+		b = list_first_entry(&vdev->qbuf_list[raw_num], struct sop_isp_buf, list);
+		index = b->buf.vb2_buf.index;
+
+		if (is_bypass) {
+			vi_pr(VI_INFO, "raw_%d bypass frm_%d\n", raw_num, frm_num);
+			//memory write workaround, warm up all vb buffer
+			if (frm_num <= vdev->qbuf_num[raw_num])
+				list_move_tail(&b->list, &vdev->qbuf_list[raw_num]);
+		} else {
+			list_move_tail(&b->list, &vdev->dqbuf_list[raw_num]);
+			vdev->dqbuf_num[raw_num]++;
+		}
+
+		vi_pr(VI_DBG, "raw_%d index:%d\n", raw_num, index);
+
+		if (list_is_singular(&vdev->qbuf_list[raw_num]) &&
+		    !list_is_singular(&vdev->dqbuf_list[raw_num])) {
+			b = list_first_entry(&vdev->dqbuf_list[raw_num], struct sop_isp_buf, list);
+			index = b->buf.vb2_buf.index;
+			list_move(&b->list, &vdev->qbuf_list[raw_num]);
+			vdev->qbuf_num[raw_num]++;
+			vdev->dqbuf_num[raw_num]--;
+			vi_pr(VI_INFO, "raw_%d qbuf run out, take vb(%d) to it's head!\n", raw_num, index);
+		}
+	} else {
+		vi_pr(VI_INFO, "raw_%d qbuf is empty!\n", raw_num);
+		spin_unlock_irqrestore(&vdev->qbuf_lock[raw_num], flags);
+		return;
+	}
+	spin_unlock_irqrestore(&vdev->qbuf_lock[raw_num], flags);
+
+	if (is_bypass) {
+		struct _isp_dqbuf_n *n = NULL;
+
+		spin_lock_irqsave(&dq_lock[raw_num], flags);
+		if (!list_empty(&dqbuf_q[raw_num].list)) {
+			n = list_first_entry(&dqbuf_q[raw_num].list, struct _isp_dqbuf_n, list);
+			list_del_init(&n->list);
+			kfree(n);
+		}
+		spin_unlock_irqrestore(&dq_lock[raw_num], flags);
+	}
+
+	if (atomic_read(&vdev->post_dq_flag[raw_num]) == 1 && !is_bypass) {
+		atomic_set(&vdev->post_dq_flag[raw_num], 0);
+		wake_up(&vdev->isp_dq_wait_q[raw_num]);
+	}
 }
 
 static void _isp_preraw_fe_dma_dump(struct isp_ctx *ictx, enum sop_isp_raw raw_num)
@@ -6897,20 +6956,14 @@ static int _vi_event_handler_thread(void *arg)
 			}
 			continue;
 		} else {
-			struct sop_isp_buf *b = NULL;
-			int index;
-			u32 frm_num = vdev->postraw_frame_number[raw_num];
-			bool is_bypass = frm_num > g_vi_ctx->bypass_frm[raw_num] ? 0 : 1;
-			unsigned long flags;
-
-			spin_lock_irqsave(&vdev->qbuf_lock[raw_num], flags);
-			if (!list_empty(&vdev->qbuf_list[raw_num])) {
-				b = list_first_entry(&vdev->qbuf_list[raw_num], struct sop_isp_buf, list);
-				index = b->buf.vb2_buf.index;
-
-				if (atomic_read(&vdev->isp_dump_yuv[raw_num])) {
-					struct vb2_buffer *vb2_buf = NULL;
-
+			if (atomic_read(&vdev->isp_dump_yuv[raw_num])) {
+				struct vb2_buffer *vb2_buf = NULL;
+				struct sop_isp_buf *b = NULL;
+				unsigned long flags;
+				spin_lock_irqsave(&vdev->qbuf_lock[raw_num], flags);
+				if (!list_empty(&vdev->dqbuf_list[raw_num])) {
+					b = list_first_entry(&vdev->dqbuf_list[raw_num],
+							     struct sop_isp_buf, list);
 					vi_pr(VI_INFO, "start to dump yuv\n");
 					vb2_buf = &(b->buf.vb2_buf);
 					copy_vb2buf_to_dump(vb2_buf);
@@ -6918,49 +6971,7 @@ static int _vi_event_handler_thread(void *arg)
 					wake_up(&vdev->yuv_dump_wait_q[raw_num]);
 					vi_pr(VI_INFO, "dump yuv success!\n");
 				}
-
-				if (is_bypass) {
-					vi_pr(VI_INFO, "raw_%d bypass frm_%d\n", raw_num, frm_num);
-					//memory write workaround, warm up all vb buffer
-					if (frm_num <= vdev->qbuf_num[raw_num])
-						list_move_tail(&b->list, &vdev->qbuf_list[raw_num]);
-				} else {
-					list_move_tail(&b->list, &vdev->dqbuf_list[raw_num]);
-					vdev->dqbuf_num[raw_num]++;
-				}
-
-				vi_pr(VI_DBG, "raw_%d index:%d\n", raw_num, index);
-
-				if (list_is_singular(&vdev->qbuf_list[raw_num])) {
-					b = list_first_entry(&vdev->dqbuf_list[raw_num], struct sop_isp_buf, list);
-					index = b->buf.vb2_buf.index;
-					list_move(&b->list, &vdev->qbuf_list[raw_num]);
-					vdev->qbuf_num[raw_num]++;
-					vdev->dqbuf_num[raw_num]--;
-					vi_pr(VI_DBG, "raw_%d qbuf run out, take vb(%d) to it's head!\n", raw_num, index);
-				}
-			} else {
-				vi_pr(VI_INFO, "raw_%d qbuf is empty!\n", raw_num);
 				spin_unlock_irqrestore(&vdev->qbuf_lock[raw_num], flags);
-				continue;
-			}
-			spin_unlock_irqrestore(&vdev->qbuf_lock[raw_num], flags);
-
-			if (is_bypass) {
-				struct _isp_dqbuf_n *n = NULL;
-
-				spin_lock_irqsave(&dq_lock[raw_num], flags);
-				if (!list_empty(&dqbuf_q[raw_num].list)) {
-					n = list_first_entry(&dqbuf_q[raw_num].list, struct _isp_dqbuf_n, list);
-					list_del_init(&n->list);
-					kfree(n);
-				}
-				spin_unlock_irqrestore(&dq_lock[raw_num], flags);
-			}
-
-			if (atomic_read(&vdev->post_dq_flag[raw_num]) == 1 && !is_bypass) {
-				atomic_set(&vdev->post_dq_flag[raw_num], 0);
-				wake_up(&vdev->isp_dq_wait_q[raw_num]);
 			}
 		}
 	}
@@ -7768,6 +7779,8 @@ static void _isp_yuv_bypass_handler(struct sop_vi_dev *vdev, const enum sop_isp_
 	if (!atomic_read(&vdev->is_streaming[buf_chn]))
 		return;
 
+	sop_isp_rdy_buf_remove(vdev, buf_chn);
+
 	sop_isp_dqbuf_list(vdev, vdev->pre_fe_frm_num[raw_num][hw_chn_num], buf_chn);
 
 	++vdev->postraw_frame_number[buf_chn];
@@ -8417,6 +8430,7 @@ static void _isp_postraw_done_handler(struct sop_vi_dev *vdev)
 	}
 
 	if (ctx->isp_pipe_cfg[raw_num].is_offline_scaler) {
+		sop_isp_rdy_buf_remove(vdev, raw_num);
 		sop_isp_dqbuf_list(vdev, vdev->postraw_frame_number[raw_num], raw_num);
 
 		vdev->vi_event_th[raw_num].flag = raw_num + 1;
@@ -9560,6 +9574,25 @@ static int sop_isp_g_ext_ctrls(
 			break;
 		}
 
+		case VI_IOCTL_GET_LINK_NUM:
+		{
+			u16 num_backlinks;
+			struct v4l2_subdev *remote_cif;
+			struct sop_isp_device *dev =
+				container_of(vdev, struct sop_isp_device, vi_dev);
+
+			remote_cif = dev->cif_sdev;
+			num_backlinks = remote_cif->entity.num_backlinks;
+
+			if (copy_to_user(p->ptr, &num_backlinks, sizeof(num_backlinks)) != 0) {
+				rc = -1;
+				break;
+			}
+
+			rc = 0;
+			break;
+		}
+
 		default:
 			vi_pr(VI_INFO, "unsupport ext ctrl cmd!\n");
 			break;
@@ -9971,27 +10004,34 @@ int sop_isp_enum_input(struct file *file, void *priv, struct v4l2_input *inp)
 int sop_isp_g_param(struct file *file, void *fh, struct v4l2_streamparm *a)
 {
 	int rc = 0;
-	u32 numerator = 40;
-	u32 denominator = 1000;
+	struct v4l2_subdev_frame_interval_enum fie;
+	struct sop_vi_dev *vdev = video_drvdata(file);
+	struct video_device *video = video_devdata(file);
+	u8 chn_id = get_video_index(video);
+
+	WARN_ON(!vdev);
 
 	if (!a) {
 		vi_pr(VI_ERR, "streamparm is NULL !!\n");
 		return -1;
 	}
 
-	if (a->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-		a->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+	subcall_get_frame_interval(vdev, chn_id, &fie);
+
+	if (a->type == V4L2_BUF_TYPE_VIDEO_CAPTURE && rc == 0) {
+		a->parm.capture.capability  = V4L2_CAP_TIMEPERFRAME;
 		a->parm.capture.capturemode = 0;
-		a->parm.capture.timeperframe.numerator = numerator;
-		a->parm.capture.timeperframe.denominator = denominator;
+		a->parm.capture.timeperframe.numerator   = fie.interval.numerator;
+		a->parm.capture.timeperframe.denominator = fie.interval.denominator;
 		a->parm.capture.extendedmode = 0;
-		a->parm.capture.readbuffers = 0;
+		a->parm.capture.readbuffers  = 0;
 	} else {
 		a->parm.output.capability = V4L2_CAP_TIMEPERFRAME;
 		a->parm.output.outputmode = 0;
-		a->parm.output.timeperframe.numerator = numerator;
-		a->parm.output.timeperframe.denominator = denominator;
+		a->parm.output.timeperframe.numerator   = fie.interval.numerator;
+		a->parm.output.timeperframe.denominator = fie.interval.denominator;
 	}
+
 	return rc;
 }
 

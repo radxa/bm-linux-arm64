@@ -248,9 +248,32 @@ static int hx8399_enable(struct drm_panel *panel)
 	struct hx8399 *ctx = panel_to_hx8399(panel);
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
 	int ret;
+	u8 cmd = 0xda;
+	u8 data;
+	u8 len = 1;
 
 	if (ctx->enabled)
 		return 0;
+
+	ret = mipi_dsi_dcs_read(dsi, cmd, &data, len);
+	if (ret || data != 0x83){
+		dev_err(ctx->dev, "Panel id read failed: %d\n", ret);
+	}
+	msleep(20);
+
+	cmd = 0xdb;
+	ret = mipi_dsi_dcs_read(dsi, cmd, &data, len);
+	if (ret || data != 0x99){
+		dev_err(ctx->dev, "Panel id read failed: %d\n", ret);
+	}
+
+	msleep(20);
+
+	cmd = 0xdc;
+	ret = mipi_dsi_dcs_read(dsi, cmd, &data, len);
+	if (ret || data != 0xf){
+		dev_err(ctx->dev, "Panel id read failed: %d\n", ret);
+	}
 
 	/* Panel is operational 180 msec before init_sequence  */
 	msleep(180);

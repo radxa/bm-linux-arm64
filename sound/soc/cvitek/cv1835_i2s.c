@@ -33,6 +33,7 @@ static int cvi_i2s_suspend(struct snd_soc_dai *dai);
 static int cvi_i2s_resume(struct snd_soc_dai *dai);
 static int really_state[4] = {0};
 
+
 static inline void i2s_write_reg(void __iomem *io_base, int reg, u32 val)
 {
 	writel(val, io_base + reg);
@@ -1233,6 +1234,8 @@ static int cvi_i2s_probe(struct platform_device *pdev)
 #else
 	i2s_write_reg(dev->i2s_base, I2S_CLK_CTRL0, val | AUD_CLK_FROM_MCLK_IN);
 #endif
+	if (dev->capability & CVI_I2S_MASTER)
+		clk_disable(dev->clk);
 
 	dev_set_drvdata(&pdev->dev, dev);
 	ret = devm_snd_soc_register_component(&pdev->dev, &cvi_i2s_component,

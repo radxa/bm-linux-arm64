@@ -77,6 +77,7 @@ struct pr2100_mode {
 	u32 exp_def;
 	u32 mipi_wdr_mode;
 	struct v4l2_fract max_fps;
+	struct v4l2_fract wdr_max_fps;
 	sns_sync_info_t pr2100_sync_info;
 	struct pr2100_reg_list reg_list;
 	struct pr2100_reg_list wdr_reg_list;
@@ -91,7 +92,7 @@ static struct pr2100_mode supported_modes[] = {
 		.height = 1080,
 		.max_fps = {
 			.numerator = 10000,
-			.denominator = 300000,
+			.denominator = 250000,
 		},
 		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(mode_1920x1080_regs),

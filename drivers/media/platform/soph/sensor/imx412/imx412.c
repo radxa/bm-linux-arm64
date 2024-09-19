@@ -66,6 +66,7 @@ struct imx412_mode {
 	u32 exp_def;
 	u32 mipi_wdr_mode;
 	struct v4l2_fract max_fps;
+	struct v4l2_fract wdr_max_fps;
 	sns_sync_info_t imx412_sync_info;
 	struct imx412_reg_list reg_list;
 	struct imx412_reg_list wdr_reg_list;

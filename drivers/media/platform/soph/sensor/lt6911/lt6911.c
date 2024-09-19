@@ -76,6 +76,7 @@ struct lt6911_mode {
 	u32 exp_def;
 	u32 mipi_wdr_mode;
 	struct v4l2_fract max_fps;
+	struct v4l2_fract wdr_max_fps;
 	sns_sync_info_t lt6911_sync_info;
 	struct lt6911_reg_list reg_list;
 	struct lt6911_reg_list wdr_reg_list;
@@ -298,6 +299,23 @@ static int g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 			 struct v4l2_mbus_config *config)
 {
 	config->type = V4L2_MBUS_CSI2_DPHY;
+	return 0;
+}
+
+static int enum_frame_interval(struct v4l2_subdev *sd,
+			      struct v4l2_subdev_pad_config *cfg,
+			      struct v4l2_subdev_frame_interval_enum *fie)
+{
+	struct lt6911 *lt6911 = to_lt6911(sd);
+
+	fie->width  = lt6911->cur_mode->width;
+	fie->height = lt6911->cur_mode->height;
+
+	if (lt6911->cur_mode->mipi_wdr_mode == MIPI_WDR_MODE_NONE) {//linear
+		fie->interval.numerator   = lt6911->cur_mode->max_fps.numerator;
+		fie->interval.denominator = lt6911->cur_mode->max_fps.denominator;
+	}
+
 	return 0;
 }
 
@@ -751,6 +769,7 @@ static const struct v4l2_subdev_pad_ops lt6911_pad_ops = {
 	.set_fmt = set_pad_format,
 	.enum_frame_size = enum_frame_size,
 	.get_mbus_config = g_mbus_config,
+	.enum_frame_interval = enum_frame_interval,
 };
 
 static const struct v4l2_subdev_ops lt6911_subdev_ops = {

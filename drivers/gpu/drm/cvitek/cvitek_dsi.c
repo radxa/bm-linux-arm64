@@ -29,6 +29,14 @@ static u8 data_0_lane;
 #define host_to_dsi(host) \
 	container_of(host, struct cvitek_dsi, host)
 
+#define ACK_WR       0x02
+#define GEN_READ_LP  0x1A
+#define GEN_READ_SP1 0x11
+#define GEN_READ_SP2 0x12
+#define DCS_READ_LP  0x1C
+#define DCS_READ_SP1 0x21
+#define DCS_READ_SP2 0x22
+
 static void cvitek_dsi_encoder_mode_set(struct drm_encoder *encoder,
 				      struct drm_display_mode *mode,
 				 struct drm_display_mode *adj_mode)
@@ -408,11 +416,10 @@ static int dsi_short_packet(u8 dsi_id, const struct mipi_dsi_msg *msg)
 	u32 val = 0;
 	const u8 *data = msg->tx_buf;
 
+	val = msg->type;
 	if (msg->tx_len == 2) {
-		val = 0x15;
 		val |= (data[0] << 8) | (data[1] << 16);
 	} else {
-		val = 0x05;
 		val |= data[0] << 8;
 	}
 
@@ -431,6 +438,76 @@ static int dsi_short_packet(u8 dsi_id, const struct mipi_dsi_msg *msg)
 	val |= (ecc((u8 *)&val) << 24);
 	dpyh_mipi_tx_manual_packet(dsi_id, (u8 *)&val, 4);
 #endif
+
+	return ret;
+}
+
+/**
+ * dsi_get_mode - get current dsi mode
+ *
+ * @return: current dsi mode
+ */
+static int dsi_get_mode(u8 inst)
+{
+	return (_reg_read(REG_DSI_MAC_EN(inst)) & 0x07);
+}
+
+static int dsi_read_packet(u8 dsi_id, const struct mipi_dsi_msg *msg)
+{
+	int ret = 0;
+	u32 rx_data;
+	int i = 0;
+	u8 *data = msg->rx_buf;
+
+	if (dsi_get_mode(dsi_id) == DSI_MODE_HS) {
+		DRM_ERROR("[mipi_tx] %s: not work in HS.\n");
+		return -1;
+	}
+	// [2:0] reg_esc_mode
+	// [7:4] reg_esc_trig
+	// [11:8] reg_tx_bc
+	// [15:12] reg_bta_rx_bc
+	// [16:16] reg_tx_bc_over: TX LPDT transfer over,0: Extend to next trigger,1: Transfer over in this trigger
+	// only set necessery bits
+	_reg_write_mask(REG_DSI_ESC(dsi_id), 0x07, 0x04);
+
+	dsi_short_packet(dsi_id, msg);
+
+	dsi_set_mode(dsi_id, DSI_MODE_ESC);
+	ret = _dsi_chk_and_clean_mode(dsi_id, DSI_MODE_ESC);
+	if (ret != 0){
+		DRM_ERROR("%s: dsi_read_packet _dsi_chk_and_clean_mode\n");
+		return ret;
+	}
+
+	// check result
+	rx_data = _reg_read(REG_DSI_ESC_RX0(dsi_id));
+	switch (rx_data & 0xff) {
+	case GEN_READ_SP1:
+	case DCS_READ_SP1:
+		data[0] = (rx_data >> 8) & 0xff;
+		break;
+	case GEN_READ_SP2:
+	case DCS_READ_SP2:
+		data[0] = (rx_data >> 8) & 0xff;
+		data[1] = (rx_data >> 16) & 0xff;
+		break;
+	case GEN_READ_LP:
+	case DCS_READ_LP:
+		rx_data = _reg_read(REG_DSI_ESC_RX1(dsi_id));
+		for (i = 0; i < msg->rx_len; ++i)
+			data[i] = (rx_data >> (i * 8)) & 0xff;
+		break;
+	case ACK_WR:
+		DRM_ERROR("[mipi_tx] %s: dcs read, ack with error(%#x %#x).\n"
+			, (rx_data >> 8) & 0xff, (rx_data >> 16) & 0xff);
+		ret = -1;
+		break;
+	default:
+		DRM_ERROR("[mipi_tx] %s: unknown DT, %#x.", rx_data);
+		ret = -1;
+		break;
+	}
 
 	return ret;
 }
@@ -611,12 +688,59 @@ static int cvitek_dsi_encoder_init(struct cvitek_dsi *dsi,
 	return 0;
 }
 
+static void _cal_htt_extra(struct drm_display_mode *mode, int lane_num, int bits)
+{
+	unsigned short htt_old, htt_new, htt_new_extra;
+	unsigned short vtt;
+	unsigned long long fps;
+	unsigned long long bit_rate_MHz;
+	unsigned long long clk_hs_MHz;
+	unsigned long long clk_hs_ns;
+	unsigned long long line_rate_KHz, line_time_us;
+	unsigned long long over_head;
+	unsigned long long t_period_max, t_period_real;
+
+	htt_old = mode->htotal;
+	vtt = mode->vtotal;
+	fps = mode->clock * 1000 / (htt_old * vtt / 1024); // fps 1024
+	bit_rate_MHz = mode->clock  * 1024 * bits / (lane_num * 1000);//bit_rate_MHz 1024
+	clk_hs_MHz = bit_rate_MHz / 2;
+	clk_hs_ns = 1000 * 1024 * 1024 / clk_hs_MHz;//clk_hs_ns 1024
+	line_rate_KHz = vtt * fps / 1000;//line_rate_KHz 1024
+	line_time_us = 1000 * 1024 * 1024 / line_rate_KHz;//line_time_us 1024
+	over_head = (3 * 50 * 2 * 3) + clk_hs_ns * 360 / 1024;
+	t_period_max = line_time_us * 1000 / 1024 - over_head;
+	t_period_real = clk_hs_ns * mode->hdisplay * bits / 4 / 2 / 1024;
+	htt_new = htt_old * t_period_real / t_period_max;
+	if (htt_new > htt_old) {
+		if (htt_new & 0x0003)
+			htt_new += (4 - (htt_new & 0x0003));
+		htt_new_extra = htt_new - htt_old;
+		mode->hsync_start += htt_new_extra;
+		mode->hsync_end += htt_new_extra;
+		mode->htotal += htt_new_extra;
+		mode->clock = htt_new * vtt * fps / 1000 / 1024;
+	}
+}
+
 static int cvitek_dsi_get_modes(struct drm_connector *connector)
 {
 	DRM_DEBUG_DRIVER("----cvitek_dsi_get_modes.\n");
 	struct cvitek_dsi *dsi = connector_to_dsi(connector);
+	struct drm_display_mode *mode;
+	struct list_head *pos;
+	int ret;
 
-	return drm_panel_get_modes(dsi->panel, connector);
+	ret = drm_panel_get_modes(dsi->panel, connector);
+	if (!ret) {
+		drm_err(dsi->drm, "failed to drm_panel_get_modes\n");
+		return ret;
+	}
+	list_for_each(pos, &connector->probed_modes) {
+		mode = list_entry(pos, struct drm_display_mode, head);
+		_cal_htt_extra(mode, dsi->ctx.data_lanes_num, dsi->ctx.bits);
+	}
+	return 1;
 }
 
 static int cvitek_dsi_atomic_check(struct drm_connector *connector,
@@ -908,7 +1032,13 @@ static ssize_t cvitek_dsi_host_transfer(struct mipi_dsi_host *host,
 		break;
 
 	case MIPI_DSI_DCS_READ:
-		//TO DO
+		mipi_dphy_set_pll(dsi->ctx.dsi_id, dsi->ctx.vm.pixelclock / 500, dsi->ctx.data_lanes_num, dsi->ctx.bits);
+		udelay(1000);
+
+		ret = dsi_read_packet(dsi->ctx.dsi_id, msg);
+
+		mipi_dphy_set_pll(dsi->ctx.dsi_id, dsi->ctx.vm.pixelclock / 1000, dsi->ctx.data_lanes_num, dsi->ctx.bits);
+		udelay(1000);
 		break;
 	default:
 		ret = -EINVAL;

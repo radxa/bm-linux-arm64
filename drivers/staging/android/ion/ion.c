@@ -456,14 +456,12 @@ int ion_alloc(size_t len, unsigned int heap_id_mask, unsigned int flags)
 	dmabuf = dma_buf_export(&exp_info);
 	if (IS_ERR(dmabuf)) {
 		_ion_buffer_destroy(buffer);
-		pr_err("dma_buf_export faeild! ret = %d\n", PTR_ERR(dmabuf));
 		return PTR_ERR(dmabuf);
 	}
 
 	fd = dma_buf_fd(dmabuf, O_CLOEXEC);
 	if (fd < 0) {
 		dma_buf_put(dmabuf);
-		pr_err("dma_buf_fd failed(fd=%d)!\n", fd);
 	}
 
 #ifdef CONFIG_ION_CVITEK

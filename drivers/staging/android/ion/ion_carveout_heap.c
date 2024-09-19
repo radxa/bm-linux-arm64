@@ -54,6 +54,7 @@ static int ion_carveout_heap_allocate(struct ion_heap *heap,
 	struct sg_table *table;
 	phys_addr_t paddr;
 	int ret;
+	static int dump_heap_info_flag;
 
 	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
@@ -61,16 +62,24 @@ static int ion_carveout_heap_allocate(struct ion_heap *heap,
 
 	ret = sg_alloc_table(table, 1, GFP_KERNEL);
 	if (ret) {
-		//pr_debug("%s sg_alloc_table failed!\n", __func__);
+		pr_err("%s sg_alloc_table failed!\n", __func__);
 		goto err_free;
 	}
 
 	paddr = ion_carveout_allocate(heap, size);
 	if (paddr == ION_CARVEOUT_ALLOCATE_FAIL) {
+		pr_err("%s ion_carveout_allocate size(%ld) failed!\n", __func__, size);
+		pr_err("%s: total_size = 0x%lx, avail_size = 0x%lx\n"
+				, __func__, heap->total_size, heap->total_size - heap->num_of_alloc_bytes);
+
+		dump_heap_info_flag = 1;
+		if (dump_heap_info_flag)
+			cvi_ion_dump_heap_info(heap);
 		ret = -ENOMEM;
 		goto err_free_table;
 	}
 
+	dump_heap_info_flag = 0;
 	sg_set_page(table->sgl, pfn_to_page(PFN_DOWN(paddr)), size, 0);
 	buffer->sg_table = table;
 #ifdef CONFIG_ION_CVITEK
@@ -152,6 +161,41 @@ struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *heap_data)
 	return &carveout_heap->heap;
 }
 
+
+void show_carveout_mem_avalinfo(u32 heap_id, struct gen_pool_chunk *chunk, u32 size_in_bit, int order)
+{
+	unsigned long *map = chunk->bits;
+	phys_addr_t region_start_addr;
+	phys_addr_t region_end_addr;
+	u64 region_len;
+	u64 free_index_start;
+	u64 free_index_end = 0;
+	phys_addr_t chunk_start_addr = chunk->start_addr;
+
+	pr_err("\n\nminimum ion allocate unit = %u\n", (u32)(2 << (order - 1)));
+
+	pr_err("free memory regions:\n");
+
+	pr_err("%16s %16s %16s %16s\n", "heap_id", "start", "end", "length");
+
+	while (free_index_end < size_in_bit) {
+		free_index_start = find_next_zero_bit(map, size_in_bit, free_index_end);
+		if (free_index_start >= size_in_bit) {
+			break;
+		}
+
+		free_index_end = find_next_bit(map, size_in_bit, free_index_start);
+
+		region_start_addr = chunk_start_addr + (free_index_start << order);
+		region_end_addr = chunk_start_addr + (free_index_end << order);
+		region_len = (free_index_end - free_index_start) << order;
+
+		pr_err("%16d %16llx %16llx %16llu\n", heap_id, region_start_addr, region_end_addr, region_len);
+	}
+
+}
+
+
 int cvi_ion_dump_heap_info(struct ion_heap *heap)
 {
 	struct ion_device *dev = heap->dev;
@@ -162,13 +206,18 @@ int cvi_ion_dump_heap_info(struct ion_heap *heap)
 	int usage_rate = 0;
 	int rem;
 	u64 tmp;
+	int end_bit;
+	struct ion_carveout_heap *carveout_heap;
+	struct gen_pool *pool;
+	struct gen_pool_chunk *chunk;
+	int order;
 
 	spin_lock(&heap->stat_lock);
 	alloc_size = heap->num_of_alloc_bytes;
 	alloc_bytes_wm = heap->alloc_bytes_wm;
 	spin_unlock(&heap->stat_lock);
 
-	pr_err("Summary:\n");
+	pr_debug("Summary:\n");
 	//In 4K(0x1 << 12) units
 	tmp = (uint64_t)alloc_size * 100 >> 12;
 	rem = do_div(tmp, total_size >> 12);
@@ -185,7 +234,6 @@ int cvi_ion_dump_heap_info(struct ion_heap *heap)
 	pr_debug("\nDetails:\n%16s %16s %16s %16s %16s\n", "heap_id"
 			, "alloc_buf_size", "phy_addr", "kmap_cnt", "buffer name");
 	mutex_lock(&dev->buffer_lock);
-	spin_lock(&heap->stat_lock);
 	rbtree_postorder_for_each_entry_safe(pos, n, &dev->buffers, node) {
 		/* only heap id matches will show buffer info */
 		if (heap->id == pos->heap->id)
@@ -193,7 +241,18 @@ int cvi_ion_dump_heap_info(struct ion_heap *heap)
 					, pos->heap->id, pos->size, pos->paddr,
 					pos->kmap_cnt, pos->name);
 	}
-	spin_unlock(&heap->stat_lock);
+	mutex_unlock(&dev->buffer_lock);
+
+	//show unused chunk
+	mutex_lock(&dev->buffer_lock);
+	carveout_heap = container_of(heap, struct ion_carveout_heap, heap);
+	pool = carveout_heap->pool;
+	order = pool->min_alloc_order;
+	list_for_each_entry_rcu(chunk, &pool->chunks, next_chunk) {
+		end_bit = (chunk->end_addr - chunk->start_addr + 1) >> order;
+		show_carveout_mem_avalinfo(heap->id, chunk, end_bit, order);
+	}
+
 	mutex_unlock(&dev->buffer_lock);
 
 	return 0;
