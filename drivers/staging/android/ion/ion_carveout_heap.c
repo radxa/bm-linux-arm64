@@ -68,11 +68,7 @@ static int ion_carveout_heap_allocate(struct ion_heap *heap,
 
 	paddr = ion_carveout_allocate(heap, size);
 	if (paddr == ION_CARVEOUT_ALLOCATE_FAIL) {
-		pr_err("%s ion_carveout_allocate size(%ld) failed!\n", __func__, size);
-		pr_err("%s: total_size = 0x%lx, avail_size = 0x%lx\n"
-				, __func__, heap->total_size, heap->total_size - heap->num_of_alloc_bytes);
-
-		dump_heap_info_flag = 1;
+		dump_heap_info_flag = 0;
 		if (dump_heap_info_flag)
 			cvi_ion_dump_heap_info(heap);
 		ret = -ENOMEM;

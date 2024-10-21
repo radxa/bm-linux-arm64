@@ -85,7 +85,6 @@ const char * const clk_isp_name[] = {
 const char * const clk_mac_name[] = {
 	"clk_csi_mac0", "clk_csi_mac1", "clk_csi_mac2",
 	"clk_csi_mac3", "clk_csi_mac4", "clk_csi_mac5",
-	"clk_csi_mac_vi0", "clk_csi_mac_vi1"
 };
 
 
@@ -1175,6 +1174,17 @@ void sop_isp_rdy_buf_remove(struct sop_vi_dev *vdev, const u8 raw_num)
 		b = list_first_entry(&vdev->qbuf_list[raw_num], struct sop_isp_buf, list);
 		index = b->buf.vb2_buf.index;
 
+		if (atomic_read(&vdev->isp_dump_yuv[raw_num])) {
+			struct vb2_buffer *vb2_buf = NULL;
+
+			vi_pr(VI_INFO, "start to dump yuv\n");
+			vb2_buf = &(b->buf.vb2_buf);
+			copy_vb2buf_to_dump(vb2_buf);
+			atomic_set(&vdev->isp_dump_yuv[raw_num], 0);
+			wake_up(&vdev->yuv_dump_wait_q[raw_num]);
+			vi_pr(VI_INFO, "dump yuv success!\n");
+		}
+
 		if (is_bypass) {
 			vi_pr(VI_INFO, "raw_%d bypass frm_%d\n", raw_num, frm_num);
 			//memory write workaround, warm up all vb buffer
@@ -1194,7 +1204,7 @@ void sop_isp_rdy_buf_remove(struct sop_vi_dev *vdev, const u8 raw_num)
 			list_move(&b->list, &vdev->qbuf_list[raw_num]);
 			vdev->qbuf_num[raw_num]++;
 			vdev->dqbuf_num[raw_num]--;
-			vi_pr(VI_INFO, "raw_%d qbuf run out, take vb(%d) to it's head!\n", raw_num, index);
+			vi_pr(VI_DBG, "raw_%d qbuf run out, take vb(%d) to it's head!\n", raw_num, index);
 		}
 	} else {
 		vi_pr(VI_INFO, "raw_%d qbuf is empty!\n", raw_num);
@@ -4393,6 +4403,10 @@ int vi_stop_streaming(struct sop_vi_dev *vdev)
 		isp_bufpool[i].fswdr_rpt = 0;
 	}
 
+	for (raw_num = ISP_PRERAW0; raw_num < ISP_PRERAW_MAX; raw_num++) {
+		vdev->ctx.isp_pipe_cfg[raw_num].is_frist_frm_done = false;
+	}
+
 	// reset at stop for next run.
 	isp_reset(&vdev->ctx);
 	for (raw_num = ISP_PRERAW0; raw_num < ISP_PRERAW_MAX; raw_num++)
@@ -6955,24 +6969,6 @@ static int _vi_event_handler_thread(void *arg)
 				g_vi_ctx->timeout_cnt = 0;
 			}
 			continue;
-		} else {
-			if (atomic_read(&vdev->isp_dump_yuv[raw_num])) {
-				struct vb2_buffer *vb2_buf = NULL;
-				struct sop_isp_buf *b = NULL;
-				unsigned long flags;
-				spin_lock_irqsave(&vdev->qbuf_lock[raw_num], flags);
-				if (!list_empty(&vdev->dqbuf_list[raw_num])) {
-					b = list_first_entry(&vdev->dqbuf_list[raw_num],
-							     struct sop_isp_buf, list);
-					vi_pr(VI_INFO, "start to dump yuv\n");
-					vb2_buf = &(b->buf.vb2_buf);
-					copy_vb2buf_to_dump(vb2_buf);
-					atomic_set(&vdev->isp_dump_yuv[raw_num], 0);
-					wake_up(&vdev->yuv_dump_wait_q[raw_num]);
-					vi_pr(VI_INFO, "dump yuv success!\n");
-				}
-				spin_unlock_irqrestore(&vdev->qbuf_lock[raw_num], flags);
-			}
 		}
 	}
 
@@ -7938,6 +7934,7 @@ static inline void _isp_pre_fe_done_handler(
 	bool trigger = false;
 	s8 ret = ISP_SUCCESS;
 
+	s8 i;
 	//reset error times when fe_done
 	if (unlikely(atomic_read(&vdev->isp_err_times[raw_num]))) {
 		atomic_set(&vdev->isp_err_times[raw_num], 0);
@@ -8073,6 +8070,25 @@ static inline void _isp_pre_fe_done_handler(
 		struct isp_grid_s_info m_info;
 		struct isp_queue *fe_out_q, *be_in_q, *raw_d_q;
 		bool fe_ai_isp = ctx->isp_pipe_cfg[raw_num].raw_ai_isp_ap == RAW_AI_ISP_FE ? 1 : 0;
+
+		//work round :Dropped a linear frame when wdr+sdr
+		if (ctx->is_hdr_on) {
+			if (ctx->isp_pipe_cfg[raw_num].is_hdr_on) {
+				ctx->isp_pipe_cfg[raw_num].is_frist_frm_done = true;
+			} else {
+				for (i = 0; i < ISP_PRERAW_MAX; i++) {
+					if (ctx->isp_pipe_cfg[i].is_frist_frm_done && ctx->isp_pipe_cfg[i].is_hdr_on) {
+						break;
+					}
+				}
+				if (i >= ISP_PRERAW_MAX) {
+					vi_pr(VI_INFO, "bypass linear if wdr not done\n");
+					atomic_set(&vdev->pre_fe_state[hw_raw_num][chn_num], ISP_STATE_IDLE);
+					_pre_hw_enque(vdev, raw_num, chn_num);
+					return;
+				}
+			}
+		}
 
 		if (_postraw_outbuf_empty(vdev, raw_num) ||
 			!atomic_read(&vdev->is_streaming[raw_num])) {
@@ -8875,6 +8891,7 @@ static int subcall_get_sensor_info(struct sop_vi_dev *vdev, u8 chn_id, u8 *raw_n
 		*raw_num = ISP_PRERAW1;
 
 	ctx->isp_bind_info[*raw_num].bind_fe_num = *raw_num;
+	ctx->isp_bind_info[*raw_num].bind_mipi_dev = mipi_dev;
 
 	if (is_yuv_sensor) {
 		ctx->isp_bind_info[chn_id].bind_fe_num = *raw_num;
@@ -10895,7 +10912,10 @@ static int sop_isp_open(struct file *file)
 
 			_v4l2_init_config_info(videv, i, raw_num);
 
-			vi_mac_clk_ctrl(videv, videv->ctx.isp_bind_info[i].bind_fe_num, true);
+			vi_mac_clk_ctrl(videv, videv->ctx.isp_bind_info[raw_num].bind_mipi_dev, true);
+		}
+		if (g_vi_ctx->chn_status[ISP_PRERAW0].size.width > 4608) {
+			vi_mac_clk_ctrl(videv, ISP_PRERAW3, true);
 		}
 	}
 
@@ -10940,6 +10960,7 @@ static int sop_isp_release(struct file *file)
 		g_vi_ctx->total_dev_num = 0;
 
 		for (i = 0; i < MAX_SENSOR_NUM; i++) {
+			vi_mac_clk_ctrl(videv, i, false);
 			if (!dev->sensors[i].sd)
 				continue;
 			vb_q = &videv->vnode[i].vb_q;
@@ -11032,7 +11053,9 @@ void vi_suspend(struct sop_vi_dev *vdev)
 {
 	vdev->ctx.is_suspend = true;
 
-	_vi_clk_ctrl(vdev, false);
+	if (atomic_read(&vdev->isp_streamon)) {
+		_vi_clk_ctrl(vdev, false);
+	}
 }
 
 void vi_resume(struct sop_vi_dev *vdev)
@@ -11062,6 +11085,8 @@ static int vi_core_clk_init(struct sop_vi_dev *videv)
 			dev_err(videv->dev, "Cannot get clk for %s\n", clk_sys_name[i]);
 			return PTR_ERR(videv->clk_sys[i]);
 		}
+		clk_prepare_enable(videv->clk_sys[i]);
+		clk_disable_unprepare(videv->clk_sys[i]);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(clk_isp_name); ++i) {
@@ -11070,6 +11095,8 @@ static int vi_core_clk_init(struct sop_vi_dev *videv)
 			dev_err(videv->dev, "Cannot get clk for %s\n", clk_isp_name[i]);
 			return PTR_ERR(videv->clk_isp[i]);
 		}
+		clk_prepare_enable(videv->clk_isp[i]);
+		clk_disable_unprepare(videv->clk_isp[i]);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(clk_mac_name); ++i) {
@@ -11078,6 +11105,8 @@ static int vi_core_clk_init(struct sop_vi_dev *videv)
 			dev_err(videv->dev, "Cannot get clk for %s\n", clk_mac_name[i]);
 			return PTR_ERR(videv->clk_mac[i]);
 		}
+		clk_prepare_enable(videv->clk_mac[i]);
+		clk_disable_unprepare(videv->clk_mac[i]);
 	}
 
 	return 0;

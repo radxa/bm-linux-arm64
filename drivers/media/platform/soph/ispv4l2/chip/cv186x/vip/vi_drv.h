@@ -579,12 +579,14 @@ struct _isp_cfg {
 	u32			is_tile			: 1;
 	u32			is_work_on_r_tile	: 1;
 	u32			is_postout_crop		: 1;
+	u32			is_frist_frm_done	: 1;
 };
 
 struct _isp_bind_info {
 	bool			is_bind;
 	u8			bind_dev_num;
 	u8			bind_fe_num;
+	u8			bind_mipi_dev;
 	u8			hw_chn;
 };
 /*
