@@ -1083,6 +1083,10 @@ static int dwc3_core_init(struct dwc3 *dwc)
 		}
 	}
 
+	reg = dwc3_readl(dwc->regs, DWC3_GCTL);
+	reg &= ~DWC3_GCTL_PWRDNSCALE_MASK;
+	dwc3_writel(dwc->regs, DWC3_GCTL, reg | DWC3_GCTL_PWRDNSCALE(0xD));
+
 	return 0;
 
 err4:
